@@ -10,8 +10,8 @@ local ALT_MAX_VAR        = 5.0 -- m/s
 local TARGET_ALTITUDES   = {20, 1000, 5000, 10000, 20000, 30000}
 local ALTITUDE_TOLERANCE = 50
 
-local ARG_THROTTLE = 0
-local ARG_AB       = 100
+local ARG_THROTTLE = 28
+local ARG_AB       = 402
 local ARG_FLAPS    = 9
 
 local missionStartTime = os.date("%Y%m%d_%H%M%S")
