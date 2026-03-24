@@ -7,8 +7,8 @@ local TAS_MAX_VAR        = 5.0 -- km/h/s
 local TURNRATE_MAX_VAR   = 0.5 -- deg/s
 local ALT_MAX_VAR        = 5.0 -- m/s
 
-local TARGET_ALTITUDES   = {20, 1000, 5000}
-local ALTITUDE_TOLERANCE = 20
+local TARGET_ALTITUDES   = {20, 1000, 5000, 10000, 20000, 30000}
+local ALTITUDE_TOLERANCE = 50
 
 local ARG_THROTTLE = 0
 local ARG_AB       = 100
@@ -31,14 +31,18 @@ local function ensurePlayerLogFile(data)
     local filename = string.format("sustained_turns_%s_%s_%s.csv", missionStartTime, safeAc, safePlayer)
     local logPath = lfs.writedir() .. "DebugMission\\Logs\\" .. filename
 
+    local fileExists = lfs.attributes(logPath) ~= nil
+
     local file = io.open(logPath, "a")
     if file then
-        if file:seek("end") == 0 then
+        if not fileExists then
             file:write("Timestamp,Player,Aircraft,TAS_km_h,TurnRate_dps,AccelG,Alt_m,Fuel_%,Wind_m_s,WindFrom_deg,Temp_C,Press_hPa,Throttle_%,AB,Flaps\n")
             file:flush()
         end
         data.logFile = file
-        env.info("DEBUG: Created log file -> " .. filename)
+        env.info("DEBUG: Created/opened log file -> " .. filename)
+    else
+        env.error("DEBUG: Failed to open log file: " .. logPath)
     end
 end
 
