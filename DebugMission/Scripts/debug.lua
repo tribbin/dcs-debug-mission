@@ -1,6 +1,4 @@
 Debug = Debug or {}
-
--- [groupId] = {enabled, unit, lastSeen, prevVel, prevTAS, prevVS, prevHeading, prevTurnRate, prevTime, sustainedStart, logFile, playerName, aircraftType}
 Debug.players = {}
 
 -- ================== CONFIG ==================
@@ -94,6 +92,7 @@ function Debug.checkPlayers()
                 prevTurnRate = 0,
                 prevTime = nil,
                 sustainedStart = nil,
+                lastSustainedLog = nil,
                 logFile = nil,
                 playerName = playerName,
                 aircraftType = aircraftType
@@ -164,38 +163,45 @@ function Debug.buildTelemetry(gid, unit, data)
 
     -- Sustained turn detection + logging
     local isStable = false
-    if data.prevTAS and data.prevTurnRate then
-        local dTAS = math.abs(tas - data.prevTAS)
-        local dTurn = math.abs(turnRate - data.prevTurnRate)
-        isStable = (dTAS <= TAS_MAX_VAR) and (dTurn <= TURNRATE_MAX_VAR)
+    if data.prevTAS and data.prevTurnRate and dt > 0.1 then
+        local dTAS_rate  = math.abs(tas - data.prevTAS) / dt
+        local dTurn_rate = math.abs(turnRate - data.prevTurnRate)
+        isStable = (dTAS_rate <= TAS_MAX_VAR) and (dTurn_rate <= TURNRATE_MAX_VAR)
     end
 
     if isStable then
-        if not data.sustainedStart then 
-            data.sustainedStart = now 
+        if not data.sustainedStart then
+            data.sustainedStart = now
         end
+
         if (now - data.sustainedStart) >= SUSTAINED_DURATION then
-            local windVec = atmosphere.getWind(pos)
-            local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
-            local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+            if not data.lastSustainedLog or (now - data.lastSustainedLog) >= 10.0 then
+                local windVec = atmosphere.getWind(pos)
+                local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
+                local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
 
-            local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
-            local tempC   = math.floor(tempK - 273.15)
-            local pressHpa = math.floor(pressPa / 100 + 0.5)
+                local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
+                local tempC    = math.floor(tempK - 273.15)
+                local pressHpa = math.floor(pressPa / 100 + 0.5)
 
-            local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
-            local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
-            local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0
-            local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
+                local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
+                local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
+                local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0
+                local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
 
-            local logLine = string.format("%s,%s,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d,%d",
-                data.playerName, data.aircraftType,
-                tas, turnRate, accelG, alt, fuel, windSpeed, windDir, tempC, pressHpa, throttle, abState, flaps)
+                local logLine = string.format("%s,%s,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                    data.playerName, data.aircraftType,
+                    tas, turnRate, accelG, alt, fuel,
+                    windSpeed, windDir, tempC, pressHpa,
+                    throttle, abState, flaps)
 
-            logSustained(data, logLine)
+                logSustained(data, logLine)
+                data.lastSustainedLog = now
+            end
         end
     else
         data.sustainedStart = nil
+        data.lastSustainedLog = nil
     end
 
     -- Update previous values
@@ -212,7 +218,7 @@ function Debug.buildTelemetry(gid, unit, data)
     local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
     local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
 
-    -- Telemetry overlay (now shows player + aircraft too)
+    -- Telemetry overlay
     return string.format(
         "ENVIRONMENT\n"..
         "Temp: %d°C   Press: %d hPa\n"..
@@ -264,4 +270,4 @@ end
 timer.scheduleFunction(Debug.checkPlayers,    nil, timer.getTime() + 1.0)
 timer.scheduleFunction(Debug.updateTelemetry, nil, timer.getTime() + 2.0)
 
-env.info("DEBUG.LUA: Loaded successfully (per-player CSV with mission start time + aircraft type)")
+env.info("DEBUG.LUA: Loaded successfully")
