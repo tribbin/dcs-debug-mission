@@ -36,7 +36,7 @@ local function ensurePlayerLogFile(data)
     local file = io.open(logPath, "a")
     if file then
         if not fileExists then
-            file:write("Timestamp,Player,Aircraft,TAS_km_h,TurnRate_dps,AccelG,Alt_m,Fuel_%,Wind_m_s,WindFrom_deg,Temp_C,Press_hPa,Throttle_%,AB,Flaps\n")
+            file:write("Timestamp,Player,Aircraft,TAS_km_h,TurnRate_dps,AccelG,Alt_m,Fuel_%,Wind_m_s,WindFrom_deg,Temp_C,Press_hPa,AB,Flaps\n")
             file:flush()
         end
         data.logFile = file
@@ -238,15 +238,14 @@ function Debug.buildTelemetry(gid, unit, data)
                 local pressHpa = math.floor(pressPa / 100 + 0.5)
 
                 local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
-                --local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
                 local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0
                 local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
 
-                local logLine = string.format("%s,%s,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                local logLine = string.format("%s,%s,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d",
                     data.playerName, data.aircraftType,
                     tas, turnRate, accelG, alt, fuel,
                     windSpeed, windDir, tempC, pressHpa,
-                    throttle, abState, flaps)
+                    abState, flaps)
 
                 logSustained(data, logLine)
                 data.lastSustainedLog = now
@@ -259,7 +258,6 @@ function Debug.buildTelemetry(gid, unit, data)
 
     -- === CONTROL VALUES ===
     local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
-    --local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
     local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and "ON" or "OFF"
     local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
 
