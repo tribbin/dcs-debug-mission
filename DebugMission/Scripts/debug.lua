@@ -1,11 +1,7 @@
--- =============================================
--- debug.lua -- Poll-based, with guards for missing methods (MiG-17F compatible)
--- =============================================
-
 Debug = Debug or {}
 Debug.players = {}          -- [groupId] = {enabled = bool, prevVel = vec3, seen = false}
 
-env.info("DEBUG.LUA: Poll-based version loaded (dedicated-safe)")
+env.info("DEBUG.LUA: Loading")
 
 function Debug.checkPlayers()
     local newPlayers = {}
@@ -34,13 +30,13 @@ function Debug.checkPlayers()
         local data = Debug.players[gid]
         if data then
             pcall(function()
-                missionCommands.removeItemForGroup(gid, {"MiG-17 Debug"})
-                local submenu = missionCommands.addSubMenuForGroup(gid, "MiG-17 Debug")
+                missionCommands.removeItemForGroup(gid, {"Debug"})
+                local submenu = missionCommands.addSubMenuForGroup(gid, "Debug")
                 missionCommands.addCommandForGroup(gid, "Toggle Telemetry Overlay", submenu,
                     function() Debug.toggleCallback(gid) end)
             end)
 
-            trigger.action.outTextForGroup(gid, "MiG-17F DEBUG TELEMETRY ENABLED BY DEFAULT", 10, true)
+            trigger.action.outTextForGroup(gid, "DEBUG TELEMETRY ENABLED BY DEFAULT", 10, true)
         end
     end
 
@@ -57,32 +53,14 @@ function Debug.toggleCallback(groupId)
 end
 
 function Debug.buildTelemetry(unit, data)
-    if not unit or not unit:isExist() then return nil end
+    if not unit or not unit:isExist() then return "Unit lost" end
 
-    local vel = unit:getVelocity() or {x=0,y=0,z=0}
+    -- Velocity-based values
+    local vel = unit:getVelocity() or {x=0, y=0, z=0}
     local tas = math.floor(math.sqrt(vel.x^2 + vel.y^2 + vel.z^2) * 3.6 + 0.5)
+    local vs  = math.floor(vel.y)
 
-    local mach = 0
-    if unit.getMachNumber then
-        local m = unit:getMachNumber()
-        if m then mach = m end
-    else
-        env.info("DEBUG: getMachNumber not available on this unit")
-    end
-
-    local turnRate = 0.0
-    if unit.getAngularVelocity then
-        local omega = unit:getAngularVelocity()
-        if omega then
-            turnRate = math.deg(math.sqrt(omega.x^2 + omega.y^2 + omega.z^2))
-            turnRate = math.floor(turnRate * 10 + 0.5) / 10
-        end
-    else
-        env.info("DEBUG: getAngularVelocity not available on this unit (common for older jets like MiG-17F)")
-    end
-
-    local vs = math.floor(vel.y or 0)
-
+    -- Acceleration from delta
     local accelG = 0
     if data.prevVel then
         local dvx = vel.x - data.prevVel.x
@@ -93,11 +71,43 @@ function Debug.buildTelemetry(unit, data)
     end
     data.prevVel = vel
 
+    -- Position
+    local pos = unit:getPosition().p
+    local alt = math.floor(pos.y)
+
+    -- Normal wind
+    local windVec = atmosphere.getWind(pos)
+    local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
+    local windDir  = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+
+    -- Turbulence wind
+    local turbVec = atmosphere.getWindWithTurbulence(pos)
+    local turbSpeed = math.floor(math.sqrt(turbVec.x^2 + turbVec.z^2) + 0.5)
+    local turbDir  = math.floor((math.deg(math.atan2(turbVec.x, turbVec.z)) + 180) % 360 + 0.5)
+
+    -- Temperature & Pressure (correct return: two numbers)
+    local tempK, pressurePa = atmosphere.getTemperatureAndPressure(pos)
+    local tempC = math.floor(tempK - 273.15)
+    local pressHpa = math.floor(pressurePa / 100 + 0.5)
+
+    -- Fuel
+    local fuel = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
+
     return string.format(
-        "TAS: %d km/h   Mach: %.2f\n"..
-        "Accel: %.1f G   Turn: %.1f °/s\n"..
-        "Vert Speed: %+d m/s",
-        tas, mach, accelG, turnRate, vs
+        "ENVIRONMENT\n"..
+        "Temp: %d°C    Press: %d hPa\n"..
+        "Wind: %d m/s from %d°\n"..
+        "Turb: %d m/s from %d°\n\n"..
+        "AIRCRAFT\n"..
+        "TAS: %d km/h    Alt: %d m\n"..
+        "Vert Speed: %+d m/s    Accel: %.1f G\n"..
+        "Fuel: %d%%",
+        tempC, pressHpa,
+        windSpeed, windDir,
+        turbSpeed, turbDir,
+        tas, alt,
+        vs, accelG,
+        fuel
     )
 end
 
@@ -132,7 +142,7 @@ function Debug.updateTelemetry()
 end
 
 function Debug.Init()
-    env.info("DEBUG: Init - poll-based setup")
+    env.info("DEBUG.LUA: Init")
     timer.scheduleFunction(Debug.checkPlayers, nil, timer.getTime() + 2)
     timer.scheduleFunction(Debug.updateTelemetry, nil, timer.getTime() + 5)
 end
