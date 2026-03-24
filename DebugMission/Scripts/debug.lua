@@ -7,6 +7,9 @@ local TAS_MAX_VAR        = 5.0 -- km/h/s
 local TURNRATE_MAX_VAR   = 0.5 -- deg/s
 local ALT_MAX_VAR        = 5.0 -- m/s
 
+local TARGET_ALTITUDES   = {20, 1000, 5000}
+local ALTITUDE_TOLERANCE = 20
+
 local ARG_THROTTLE = 0
 local ARG_AB       = 100
 local ARG_FLAPS    = 9
@@ -189,6 +192,23 @@ function Debug.buildTelemetry(gid, unit, data)
         return table.concat(bar)
     end
 
+    -- Target altitude band check
+    local isInTargetBand = false
+    local nearestTarget = nil
+    local minDist = math.huge
+    for _, target in ipairs(TARGET_ALTITUDES) do
+        local dist = math.abs(alt - target)
+        if dist < minDist then
+            minDist = dist
+            nearestTarget = target
+        end
+        if dist <= ALTITUDE_TOLERANCE then
+            isInTargetBand = true
+            nearestTarget = target
+            break
+        end
+    end
+
     -- Sustained turn detection + logging
     local isStable = false
     if data.prevTAS and data.prevTurnRate and data.prevAlt and dt > 0.1 then
@@ -198,7 +218,7 @@ function Debug.buildTelemetry(gid, unit, data)
         isStable = (dTAS_rate_abs <= TAS_MAX_VAR) and (dTurn_rate_abs <= TURNRATE_MAX_VAR) and (dAlt_rate_abs <= ALT_MAX_VAR)
     end
 
-    if isStable then
+    if isStable and isInTargetBand then
         if not data.sustainedStart then
             data.sustainedStart = now
         end
@@ -248,6 +268,14 @@ function Debug.buildTelemetry(gid, unit, data)
     local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
     local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
 
+    -- Target band status text
+    local targetStatus
+    if isInTargetBand then
+        targetStatus = string.format("Target: %d m (±%d m) - LOGGING ENABLED", nearestTarget, ALTITUDE_TOLERANCE)
+    else
+        targetStatus = string.format("Target: OUTSIDE BANDS (nearest %d m) - NO LOGGING", nearestTarget)
+    end
+
     -- Telemetry overlay with correction bars
     return string.format(
         "ENVIRONMENT\n"..
@@ -267,6 +295,7 @@ function Debug.buildTelemetry(gid, unit, data)
         "%s\n"..
         "Alt Δ: %.1f m/s\n"..
         "%s\n\n"..
+        "%s\n\n"..
         "Player: %s | %s\n"..
         "Telemetry %s",
         math.floor(tempK - 273.15),
@@ -282,6 +311,7 @@ function Debug.buildTelemetry(gid, unit, data)
         dTAS_rate, makeCorrectionBar(dTAS_rate, TAS_MAX_VAR),
         dTurn_rate, makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR),
         dAlt_rate,  makeCorrectionBar(dAlt_rate, ALT_MAX_VAR),
+        targetStatus,
         data.playerName,
         data.aircraftType,
         data.enabled and "ON" or "OFF"
