@@ -163,13 +163,39 @@ function Debug.buildTelemetry(gid, unit, data)
     local tasDelta = data.prevTAS and string.format(" (%+.1f)", (tas - data.prevTAS) / dt) or ""
     local vsDelta  = data.prevVS  and string.format(" (%+d)", math.floor((vs - data.prevVS) / dt)) or ""
 
-    -- Sustained turn detection
+    -- Signed rates for correction bars
+    local dTAS_rate  = data.prevTAS and dt > 0.1 and (tas - data.prevTAS) / dt or 0
+    local dTurn_rate = data.prevTurnRate and (turnRate - data.prevTurnRate) or 0
+    local dAlt_rate  = data.prevAlt and dt > 0.1 and (alt - data.prevAlt) / dt or 0
+
+    -- Correction bar helper
+    local function makeCorrectionBar(value, maxVal)
+        local width = 21
+        local half  = 10
+        local pos   = math.floor(half + (value / maxVal) * half)
+        pos = math.max(0, math.min(width - 1, pos))
+
+        local bar = {}
+        for i = 0, width - 1 do
+            if i == half then
+                bar[i+1] = "0"
+            else
+                bar[i+1] = "="
+            end
+        end
+        if pos ~= half then
+            bar[pos+1] = (value > 0) and ">" or "<"
+        end
+        return table.concat(bar)
+    end
+
+    -- Sustained turn detection + logging
     local isStable = false
     if data.prevTAS and data.prevTurnRate and data.prevAlt and dt > 0.1 then
-        local dTAS_rate  = math.abs(tas - data.prevTAS) / dt
-        local dTurn_rate = math.abs(turnRate - data.prevTurnRate)
-        local dAlt_rate  = math.abs(alt - data.prevAlt) / dt
-        isStable = (dTAS_rate <= TAS_MAX_VAR) and (dTurn_rate <= TURNRATE_MAX_VAR) and (dAlt_rate <= ALT_MAX_VAR)
+        local dTAS_rate_abs  = math.abs(dTAS_rate)
+        local dTurn_rate_abs = math.abs(dTurn_rate)
+        local dAlt_rate_abs  = math.abs(dAlt_rate)
+        isStable = (dTAS_rate_abs <= TAS_MAX_VAR) and (dTurn_rate_abs <= TURNRATE_MAX_VAR) and (dAlt_rate_abs <= ALT_MAX_VAR)
     end
 
     if isStable then
@@ -222,7 +248,7 @@ function Debug.buildTelemetry(gid, unit, data)
     local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
     local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
 
-    -- Telemetry overlay
+    -- Telemetry overlay with correction bars
     return string.format(
         "ENVIRONMENT\n"..
         "Temp: %d°C   Press: %d hPa\n"..
@@ -234,6 +260,10 @@ function Debug.buildTelemetry(gid, unit, data)
         "Accel: %.1f G\n"..
         "Alt: %d m\n"..
         "Fuel: %d%%\n\n"..
+        "SUSTAINED TURN BARS (stay near 0)\n"..
+        "TAS  Δ: %s  %.1f\n"..
+        "Turn Δ: %s  %.2f\n"..
+        "Alt  Δ: %s  %.1f\n\n"..
         "Player: %s | %s\n"..
         "Telemetry %s",
         math.floor(tempK - 273.15),
@@ -246,6 +276,9 @@ function Debug.buildTelemetry(gid, unit, data)
         accelG,
         alt,
         unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0,
+        makeCorrectionBar(dTAS_rate, TAS_MAX_VAR), dTAS_rate,
+        makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR), dTurn_rate,
+        makeCorrectionBar(dAlt_rate, ALT_MAX_VAR), dAlt_rate,
         data.playerName,
         data.aircraftType,
         data.enabled and "ON" or "OFF"
