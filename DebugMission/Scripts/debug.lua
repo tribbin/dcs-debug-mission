@@ -261,9 +261,12 @@ function Debug.buildTelemetry(gid, unit, data)
         "Alt: %d m\n"..
         "Fuel: %d%%\n\n"..
         "SUSTAINED TURN BARS (stay near 0)\n"..
-        "TAS  Δ: %s  %.1f\n"..
-        "Turn Δ: %s  %.2f\n"..
-        "Alt  Δ: %s  %.1f\n\n"..
+        "TAS Δ: %.1f km/h/s\n"..
+        "%s\n"..
+        "Turn Δ: %.2f °/s²\n"..
+        "%s\n"..
+        "Alt Δ: %.1f m/s\n"..
+        "%s\n\n"..
         "Player: %s | %s\n"..
         "Telemetry %s",
         math.floor(tempK - 273.15),
@@ -276,9 +279,9 @@ function Debug.buildTelemetry(gid, unit, data)
         accelG,
         alt,
         unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0,
-        makeCorrectionBar(dTAS_rate, TAS_MAX_VAR), dTAS_rate,
-        makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR), dTurn_rate,
-        makeCorrectionBar(dAlt_rate, ALT_MAX_VAR), dAlt_rate,
+        dTAS_rate, makeCorrectionBar(dTAS_rate, TAS_MAX_VAR),
+        dTurn_rate, makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR),
+        dAlt_rate,  makeCorrectionBar(dAlt_rate, ALT_MAX_VAR),
         data.playerName,
         data.aircraftType,
         data.enabled and "ON" or "OFF"
