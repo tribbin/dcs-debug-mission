@@ -2,9 +2,10 @@ Debug = Debug or {}
 Debug.players = {}
 
 -- ================== CONFIG ==================
-local SUSTAINED_DURATION = 8.0
-local TAS_MAX_VAR        = 5.0
-local TURNRATE_MAX_VAR   = 0.5
+local SUSTAINED_DURATION = 8.0 -- seconds
+local TAS_MAX_VAR        = 5.0 -- km/h/s
+local TURNRATE_MAX_VAR   = 0.5 -- deg/s
+local ALT_MAX_VAR        = 5.0 -- m/s
 
 local ARG_THROTTLE = 0
 local ARG_AB       = 100
@@ -91,6 +92,7 @@ function Debug.checkPlayers()
                 prevHeading = nil,
                 prevTurnRate = 0,
                 prevTime = nil,
+                prevAlt = nil,
                 sustainedStart = nil,
                 lastSustainedLog = nil,
                 logFile = nil,
@@ -161,12 +163,13 @@ function Debug.buildTelemetry(gid, unit, data)
     local tasDelta = data.prevTAS and string.format(" (%+.1f)", (tas - data.prevTAS) / dt) or ""
     local vsDelta  = data.prevVS  and string.format(" (%+d)", math.floor((vs - data.prevVS) / dt)) or ""
 
-    -- Sustained turn detection + logging
+    -- Sustained turn detection
     local isStable = false
-    if data.prevTAS and data.prevTurnRate and dt > 0.1 then
+    if data.prevTAS and data.prevTurnRate and data.prevAlt and dt > 0.1 then
         local dTAS_rate  = math.abs(tas - data.prevTAS) / dt
         local dTurn_rate = math.abs(turnRate - data.prevTurnRate)
-        isStable = (dTAS_rate <= TAS_MAX_VAR) and (dTurn_rate <= TURNRATE_MAX_VAR)
+        local dAlt_rate  = math.abs(alt - data.prevAlt) / dt
+        isStable = (dTAS_rate <= TAS_MAX_VAR) and (dTurn_rate <= TURNRATE_MAX_VAR) and (dAlt_rate <= ALT_MAX_VAR)
     end
 
     if isStable then
@@ -210,6 +213,7 @@ function Debug.buildTelemetry(gid, unit, data)
     data.prevVS       = vs
     data.prevHeading  = heading
     data.prevTurnRate = turnRate
+    data.prevAlt      = alt
     data.prevTime     = now
 
     -- Environment values
