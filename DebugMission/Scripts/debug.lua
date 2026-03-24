@@ -1,6 +1,15 @@
 Debug = Debug or {}
-Debug.players = {}          -- [groupId] = {enabled, prevVel, prevTAS, prevVS, prevHeading, prevTime, seen}
+Debug.players = {}          -- [groupId] = {enabled, prevVel, prevTAS, prevVS, prevHeading, prevTime, sustainedStart, seen}
 
+-- ================== CONFIG ==================
+local SUSTAINED_DURATION = 8.0        -- seconds of stability required before logging starts
+local TAS_MAX_VAR        = 5.0        -- km/h variation allowed
+local TURNRATE_MAX_VAR   = 0.5        -- °/s variation allowed
+
+-- Cockpit arguments
+local ARG_THROTTLE = 0
+local ARG_AB       = 100
+local ARG_FLAPS    = 9
 env.info("DEBUG.LUA: Loading")
 
 function Debug.checkPlayers()
@@ -21,6 +30,7 @@ function Debug.checkPlayers()
                             prevVS = nil,
                             prevHeading = nil,
                             prevTime = nil,
+                            sustainedStart = nil,
                             seen = true
                         }
                         newPlayers[gid] = unit
@@ -60,17 +70,38 @@ function Debug.toggleCallback(groupId)
     trigger.action.outTextForGroup(groupId, msg, 8, true)
 end
 
+-- ================== CSV LOGGING ==================
+local logFile = nil
+local logPath = lfs.writedir() .. "DebugMission\\Logs\\sustained_turns.csv"
+
+local function ensureLogFile()
+    if logFile then return end
+    lfs.mkdir(lfs.writedir() .. "DebugMission")
+    lfs.mkdir(lfs.writedir() .. "DebugMission\\Logs")
+    logFile = io.open(logPath, "a")
+    if logFile and logFile:seek("end") == 0 then
+        logFile:write("Timestamp,TAS_km_h,TurnRate_dps,AccelG,Alt_m,Fuel_%,Wind_m_s,WindFrom_deg,Temp_C,Press_hPa,Throttle_%,AB,Flaps\n")
+        logFile:flush()
+    end
+end
+
+local function logSustained(gid, logData)
+    ensureLogFile()
+    if not logFile then return end
+    local ts = os.date("%Y-%m-%d %H:%M:%S")
+    logFile:write(string.format("%s,%s\n", ts, logData))
+    logFile:flush()
+end
+
 function Debug.buildTelemetry(unit, data)
     if not unit or not unit:isExist() then return "Unit lost" end
 
     local now = timer.getTime()
 
-    -- Velocity-based values
     local vel = unit:getVelocity() or {x=0, y=0, z=0}
     local tas = math.floor(math.sqrt(vel.x^2 + vel.y^2 + vel.z^2) * 3.6 + 0.5)
     local vs  = math.floor(vel.y)
 
-    -- Acceleration from delta
     local accelG = 0
     if data.prevVel then
         local dvx = vel.x - data.prevVel.x
@@ -81,31 +112,28 @@ function Debug.buildTelemetry(unit, data)
     end
     data.prevVel = vel
 
-    -- Position
     local pos = unit:getPosition().p
     local alt = math.floor(pos.y)
 
-    -- === TURN RATE (approximated from heading change) ===
-    local heading = math.deg(math.atan2(vel.x, vel.z))   -- 0° = North, clockwise
+    -- Turn rate
+    local heading = math.deg(math.atan2(vel.x, vel.z))
     local turnRate = 0
     if data.prevHeading and data.prevTime then
         local dt = now - data.prevTime
         if dt > 0 then
-            local dHeading = heading - data.prevHeading
-            -- Normalize to shortest angle
-            dHeading = (dHeading + 180) % 360 - 180
-            turnRate = dHeading / dt
+            local dH = heading - data.prevHeading
+            dH = (dH + 180) % 360 - 180
+            turnRate = dH / dt
             turnRate = math.floor(turnRate * 10 + 0.5) / 10
         end
     end
     data.prevHeading = heading
     data.prevTime = now
 
-    -- === DELTAS (rate of change per second) ===
+    -- Deltas
     local tasDelta = ""
     local vsDelta  = ""
     if data.prevTAS and data.prevVS then
-        local dt = 1.0  -- update runs every ~1s
         local dTAS = tas - data.prevTAS
         local dVS  = vs - data.prevVS
         tasDelta = string.format(" (%+.1f km/h/s)", dTAS)
@@ -114,24 +142,44 @@ function Debug.buildTelemetry(unit, data)
     data.prevTAS = tas
     data.prevVS  = vs
 
-    -- Normal wind
-    local windVec = atmosphere.getWind(pos)
-    local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
-    local windDir  = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+    -- === SUSTAINED TURN DETECTION ===
+    local isStable = false
+    if data.prevTAS and data.prevHeading then
+        local dTAS = math.abs(tas - data.prevTAS)
+        local dTurn = math.abs(turnRate - (data.prevHeading or 0))
+        isStable = (dTAS <= TAS_MAX_VAR) and (dTurn <= TURNRATE_MAX_VAR)
+    end
 
-    -- Turbulence wind
-    local turbVec = atmosphere.getWindWithTurbulence(pos)
-    local turbSpeed = math.floor(math.sqrt(turbVec.x^2 + turbVec.z^2) + 0.5)
-    local turbDir  = math.floor((math.deg(math.atan2(turbVec.x, turbVec.z)) + 180) % 360 + 0.5)
+    if isStable then
+        if not data.sustainedStart then
+            data.sustainedStart = now
+        end
+        if (now - data.sustainedStart) >= SUSTAINED_DURATION then
+            -- Log to CSV
+            local windVec = atmosphere.getWind(pos)
+            local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
+            local windDir  = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
 
-    -- Temperature & Pressure
-    local tempK, pressurePa = atmosphere.getTemperatureAndPressure(pos)
-    local tempC = math.floor(tempK - 273.15)
-    local pressHpa = math.floor(pressurePa / 100 + 0.5)
+            local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
+            local tempC = math.floor(tempK - 273.15)
+            local pressHpa = math.floor(pressPa / 100 + 0.5)
 
-    -- Fuel
-    local fuel = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
+            local fuel = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
 
+            local throttle = unit.getDrawArgumentValue and math.floor(unit:getDrawArgumentValue(ARG_THROTTLE) * 100 + 0.5) or 0
+            local abState  = (unit.getDrawArgumentValue and unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5 and 1 or 0
+            local flaps    = unit.getDrawArgumentValue and math.floor(unit:getDrawArgumentValue(ARG_FLAPS) * 100 + 0.5) or 0
+
+            local logLine = string.format("%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+                tas, turnRate, accelG, alt, fuel, windSpeed, windDir, tempC, pressHpa, throttle, abState, flaps)
+
+            logSustained(gid, logLine)
+        end
+    else
+        data.sustainedStart = nil
+    end
+
+    -- Overlay (exactly as in your current code)
     return string.format(
         "ENVIRONMENT\n"..
         "Temp: %d°C    Press: %d hPa\n"..
@@ -141,9 +189,10 @@ function Debug.buildTelemetry(unit, data)
         "TAS: %d km/h%s    Alt: %d m\n"..
         "Vert Speed: %+d m/s%s    Turn: %+.1f °/s\n"..
         "Accel: %.1f G    Fuel: %d%%",
-        tempC, pressHpa,
+        math.floor(tempK - 273.15), math.floor(pressPa / 100 + 0.5),
         windSpeed, windDir,
-        turbSpeed, turbDir,
+        math.floor(math.sqrt(atmosphere.getWindWithTurbulence(pos).x^2 + atmosphere.getWindWithTurbulence(pos).z^2) + 0.5),
+        math.floor((math.deg(math.atan2(atmosphere.getWindWithTurbulence(pos).x, atmosphere.getWindWithTurbulence(pos).z)) + 180) % 360 + 0.5),
         tas, tasDelta,
         alt,
         vs, vsDelta,
