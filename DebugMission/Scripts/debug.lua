@@ -1,5 +1,5 @@
 Debug = Debug or {}
-Debug.players = {}          -- [groupId] = {enabled = bool, prevVel = vec3, seen = false}
+Debug.players = {}          -- [groupId] = {enabled, prevVel, prevTAS, prevVS, prevHeading, prevTime, seen}
 
 env.info("DEBUG.LUA: Loading")
 
@@ -14,7 +14,15 @@ function Debug.checkPlayers()
                 if group then
                     local gid = group:getID()
                     if not Debug.players[gid] then
-                        Debug.players[gid] = {enabled = true, prevVel = nil, seen = true}
+                        Debug.players[gid] = {
+                            enabled = true,
+                            prevVel = nil,
+                            prevTAS = nil,
+                            prevVS = nil,
+                            prevHeading = nil,
+                            prevTime = nil,
+                            seen = true
+                        }
                         newPlayers[gid] = unit
                         env.info("DEBUG: New player detected via poll - group " .. gid)
                     elseif not Debug.players[gid].seen then
@@ -55,6 +63,8 @@ end
 function Debug.buildTelemetry(unit, data)
     if not unit or not unit:isExist() then return "Unit lost" end
 
+    local now = timer.getTime()
+
     -- Velocity-based values
     local vel = unit:getVelocity() or {x=0, y=0, z=0}
     local tas = math.floor(math.sqrt(vel.x^2 + vel.y^2 + vel.z^2) * 3.6 + 0.5)
@@ -75,6 +85,35 @@ function Debug.buildTelemetry(unit, data)
     local pos = unit:getPosition().p
     local alt = math.floor(pos.y)
 
+    -- === TURN RATE (approximated from heading change) ===
+    local heading = math.deg(math.atan2(vel.x, vel.z))   -- 0° = North, clockwise
+    local turnRate = 0
+    if data.prevHeading and data.prevTime then
+        local dt = now - data.prevTime
+        if dt > 0 then
+            local dHeading = heading - data.prevHeading
+            -- Normalize to shortest angle
+            dHeading = (dHeading + 180) % 360 - 180
+            turnRate = dHeading / dt
+            turnRate = math.floor(turnRate * 10 + 0.5) / 10
+        end
+    end
+    data.prevHeading = heading
+    data.prevTime = now
+
+    -- === DELTAS (rate of change per second) ===
+    local tasDelta = ""
+    local vsDelta  = ""
+    if data.prevTAS and data.prevVS then
+        local dt = 1.0  -- update runs every ~1s
+        local dTAS = tas - data.prevTAS
+        local dVS  = vs - data.prevVS
+        tasDelta = string.format(" (%+.1f km/h/s)", dTAS)
+        vsDelta  = string.format(" (%+d m/s²)", math.floor(dVS))
+    end
+    data.prevTAS = tas
+    data.prevVS  = vs
+
     -- Normal wind
     local windVec = atmosphere.getWind(pos)
     local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
@@ -85,7 +124,7 @@ function Debug.buildTelemetry(unit, data)
     local turbSpeed = math.floor(math.sqrt(turbVec.x^2 + turbVec.z^2) + 0.5)
     local turbDir  = math.floor((math.deg(math.atan2(turbVec.x, turbVec.z)) + 180) % 360 + 0.5)
 
-    -- Temperature & Pressure (correct return: two numbers)
+    -- Temperature & Pressure
     local tempK, pressurePa = atmosphere.getTemperatureAndPressure(pos)
     local tempC = math.floor(tempK - 273.15)
     local pressHpa = math.floor(pressurePa / 100 + 0.5)
@@ -99,14 +138,17 @@ function Debug.buildTelemetry(unit, data)
         "Wind: %d m/s from %d°\n"..
         "Turb: %d m/s from %d°\n\n"..
         "AIRCRAFT\n"..
-        "TAS: %d km/h    Alt: %d m\n"..
-        "Vert Speed: %+d m/s    Accel: %.1f G\n"..
-        "Fuel: %d%%",
+        "TAS: %d km/h%s    Alt: %d m\n"..
+        "Vert Speed: %+d m/s%s    Turn: %+.1f °/s\n"..
+        "Accel: %.1f G    Fuel: %d%%",
         tempC, pressHpa,
         windSpeed, windDir,
         turbSpeed, turbDir,
-        tas, alt,
-        vs, accelG,
+        tas, tasDelta,
+        alt,
+        vs, vsDelta,
+        turnRate,
+        accelG,
         fuel
     )
 end
