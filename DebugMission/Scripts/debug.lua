@@ -2,7 +2,7 @@ Debug = Debug or {}
 Debug.players = {}
 
 -- ================== CONFIG ==================
-local SUSTAINED_DURATION = 8.0 -- seconds
+local SUSTAINED_DURATION = 5.0 -- seconds
 local TAS_MAX_VAR        = 5.0 -- km/h/s
 local TURNRATE_MAX_VAR   = 0.5 -- deg/s
 local ALT_MAX_VAR        = 5.0 -- m/s
@@ -265,7 +265,10 @@ function Debug.buildTelemetry(gid, unit, data)
 
                 logSustained(data, logLine)
                 data.lastSustainedLog = now
+                trigger.action.outSoundForGroup(gid, "pluck_high.ogg")
             end
+        else
+            trigger.action.outSoundForGroup(gid, "pluck.ogg")
         end
     else
         data.sustainedStart = nil
