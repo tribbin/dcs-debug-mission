@@ -10,8 +10,8 @@ local ALT_MAX_VAR        = 5.0 -- m/s
 local TARGET_ALTITUDES   = {20, 1000, 5000, 10000, 20000, 30000}
 local ALTITUDE_TOLERANCE = 50
 
-local ARG_THROTTLE = 28
-local ARG_AB       = 402
+--local ARG_THROTTLE = 722 -- Has no animation
+local ARG_AB       = 28
 local ARG_FLAPS    = 9
 
 local missionStartTime = os.date("%Y%m%d_%H%M%S")
@@ -238,7 +238,7 @@ function Debug.buildTelemetry(gid, unit, data)
                 local pressHpa = math.floor(pressPa / 100 + 0.5)
 
                 local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
-                local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
+                --local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
                 local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0
                 local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
 
@@ -256,6 +256,12 @@ function Debug.buildTelemetry(gid, unit, data)
         data.sustainedStart = nil
         data.lastSustainedLog = nil
     end
+
+    -- === CONTROL VALUES ===
+    local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
+    --local throttle = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_THROTTLE) or 0) * 100 + 0.5) or 0
+    local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and "ON" or "OFF"
+    local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
 
     -- Update previous values
     data.prevVel      = vel
@@ -291,7 +297,7 @@ function Debug.buildTelemetry(gid, unit, data)
         "Turn rate: %.1f °/s\n"..
         "Accel: %.1f G\n"..
         "Alt: %d m\n"..
-        "Fuel: %d%%\n\n"..
+        "Fuel: %d%%   AB: %s   Flaps: %d%%\n\n"..
         "SUSTAINED TURN BARS (stay near 0)\n"..
         "TAS Δ: %.1f km/h/s\n"..
         "%s\n"..
@@ -311,7 +317,7 @@ function Debug.buildTelemetry(gid, unit, data)
         turnRate,
         accelG,
         alt,
-        unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0,
+        fuel, abState, flaps,          -- ← new compact line
         dTAS_rate, makeCorrectionBar(dTAS_rate, TAS_MAX_VAR),
         dTurn_rate, makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR),
         dAlt_rate,  makeCorrectionBar(dAlt_rate, ALT_MAX_VAR),
