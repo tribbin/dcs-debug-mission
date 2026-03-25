@@ -374,7 +374,7 @@ function Debug.buildTelemetry(gid, unit, data)
         "TAS Δ: %.1f km/h/s\n%s\n"..
         "Turn Δ: %.2f °/s²\n%s\n"..
         "Alt Δ: %.1f m/s\n%s\n\n"..
-        "────────────────────────────────────────────────────────────\n"..
+        "\n"..
         "PRIMARY FLIGHT REFERENCE\n\n"..
         "TAS:    %d km/h\n"..
         "TARGET: %d m\n"..
