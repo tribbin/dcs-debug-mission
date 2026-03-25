@@ -9,7 +9,6 @@ local TURNRATE_MAX_VAR   = 0.5     -- deg/s
 local ALT_MAX_VAR        = 5.0     -- m/s
 
 local TARGET_ALTITUDES   = {20, 1000, 5000, 10000, 20000, 30000}
-local ALTITUDE_TOLERANCE = 50
 
 --local ARG_THROTTLE = 722 -- Has no animation
 local ARG_AB       = 28
@@ -243,6 +242,9 @@ function Debug.buildTelemetry(gid, unit, data)
     end
 
     local altDeviation = alt - nearestTarget
+
+    -- Auto-scale tolerance: wider band at higher altitude
+    local ALTITUDE_TOLERANCE = 40 + math.floor(nearestTarget / 180)   -- ~50 m low → ~200 m at 30 km
 
     -- Target altitude band check (kept for logging trigger)
     local isInTargetBand = false
