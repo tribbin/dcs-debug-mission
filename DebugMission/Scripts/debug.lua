@@ -2,10 +2,11 @@ Debug = Debug or {}
 Debug.players = {}
 
 -- ================== CONFIG ==================
-local SUSTAINED_DURATION = 5.0 -- seconds
-local TAS_MAX_VAR        = 5.0 -- km/h/s
-local TURNRATE_MAX_VAR   = 0.5 -- deg/s
-local ALT_MAX_VAR        = 5.0 -- m/s
+local SAMPLE_INTERVAL    = 0.5     -- seconds
+local SUSTAINED_DURATION = 3.8     -- seconds
+local TAS_MAX_VAR        = 5.0     -- km/h/s
+local TURNRATE_MAX_VAR   = 0.5     -- deg/s
+local ALT_MAX_VAR        = 5.0     -- m/s
 
 local TARGET_ALTITUDES   = {20, 1000, 5000, 10000, 20000, 30000}
 local ALTITUDE_TOLERANCE = 50
@@ -53,6 +54,48 @@ local function logSustained(data, logData)
     local ts = os.date("%Y-%m-%d %H:%M:%S")
     data.logFile:write(string.format("%s,%s\n", ts, logData))
     data.logFile:flush()
+end
+
+-- ================== VISUAL BAR HELPERS (from better-ergonomics branch) ==================
+local function makeCorrectionBar(value, maxVal)
+    local width = 21
+    local half  = 10
+    local pos   = math.floor(half + (value / maxVal) * half)
+    pos = math.max(0, math.min(width - 1, pos))
+
+    local bar = {}
+    for i = 0, width - 1 do
+        if i == half then
+            bar[i+1] = "0"
+        else
+            bar[i+1] = "="
+        end
+    end
+    if pos ~= half then
+        bar[pos+1] = (value > 0) and ">" or "<"
+    end
+    return table.concat(bar)
+end
+
+local function makeAltDeviationBar(deviation)
+    local maxDev = 300
+    local width = 41
+    local half  = 20
+    local pos   = math.floor(half + (deviation / maxDev) * half)
+    pos = math.max(0, math.min(width - 1, pos))
+
+    local bar = {}
+    for i = 0, width - 1 do
+        if i == half then
+            bar[i+1] = "0"
+        else
+            bar[i+1] = "="
+        end
+    end
+    if pos ~= half then
+        bar[pos+1] = (deviation > 0) and ">" or "<"
+    end
+    return table.concat(bar)
 end
 
 -- ================== PLAYER MANAGEMENT ==================
@@ -104,7 +147,8 @@ function Debug.checkPlayers()
                 lastSustainedLog = nil,
                 logFile = nil,
                 playerName = playerName,
-                aircraftType = aircraftType
+                aircraftType = aircraftType,
+                stableBuffer = {}      -- rolling buffer of stable samples for averaging
             }
 
             pcall(function()
@@ -187,27 +231,7 @@ function Debug.buildTelemetry(gid, unit, data)
     local dTurn_rate = data.prevTurnRate and (turnRate - data.prevTurnRate) or 0
     local dAlt_rate  = data.prevAlt and dt > 0.1 and (alt - data.prevAlt) / dt or 0
 
-    local function makeCorrectionBar(value, maxVal)
-        local width = 21
-        local half  = 10
-        local pos   = math.floor(half + (value / maxVal) * half)
-        pos = math.max(0, math.min(width - 1, pos))
-
-        local bar = {}
-        for i = 0, width - 1 do
-            if i == half then
-                bar[i+1] = "0"
-            else
-                bar[i+1] = "="
-            end
-        end
-        if pos ~= half then
-            bar[pos+1] = (value > 0) and ">" or "<"
-        end
-        return table.concat(bar)
-    end
-
-    -- Find nearest pre-programmed altitude for snapping
+    -- Find nearest pre-programmed altitude for snapping (ergonomics branch)
     local nearestTarget = TARGET_ALTITUDES[1]
     local minDist = math.abs(alt - TARGET_ALTITUDES[1])
     for _, target in ipairs(TARGET_ALTITUDES) do
@@ -220,81 +244,101 @@ function Debug.buildTelemetry(gid, unit, data)
 
     local altDeviation = alt - nearestTarget
 
-    local function makeAltDeviationBar(deviation)
-        local maxDev = 300
-        local width = 41
-        local half  = 20
-        local pos   = math.floor(half + (deviation / maxDev) * half)
-        pos = math.max(0, math.min(width - 1, pos))
-
-        local bar = {}
-        for i = 0, width - 1 do
-            if i == half then
-                bar[i+1] = "0"
-            else
-                bar[i+1] = "="
-            end
-        end
-        if pos ~= half then
-            bar[pos+1] = (deviation > 0) and ">" or "<"
-        end
-        return table.concat(bar)
-    end
-
-    -- === SUSTAINED TURN DETECTION (CSV logging) - ORIGINAL LOGIC KEPT ===
+    -- Target altitude band check (kept for logging trigger)
     local isInTargetBand = false
-    for _, target in ipairs(TARGET_ALTITUDES) do
-        if math.abs(alt - target) <= ALTITUDE_TOLERANCE then
+    for _, targetAlt in ipairs(TARGET_ALTITUDES) do
+        if math.abs(alt - targetAlt) <= ALTITUDE_TOLERANCE then
             isInTargetBand = true
-            nearestTarget = target
             break
         end
     end
 
-    -- Sustained turn detection + logging
+    -- === SUSTAINED TURN DETECTION + LOGGING WITH AVERAGING ===
     local isStable = false
     if data.prevTAS and data.prevTurnRate and data.prevAlt and dt > 0.1 then
         local dTAS_rate_abs  = math.abs(dTAS_rate)
         local dTurn_rate_abs = math.abs(dTurn_rate)
         local dAlt_rate_abs  = math.abs(dAlt_rate)
-        isStable = (dTAS_rate_abs <= TAS_MAX_VAR) and (dTurn_rate_abs <= TURNRATE_MAX_VAR) and (dAlt_rate_abs <= ALT_MAX_VAR)
+        isStable = (dTAS_rate_abs <= TAS_MAX_VAR) and
+                   (dTurn_rate_abs <= TURNRATE_MAX_VAR) and
+                   (dAlt_rate_abs <= ALT_MAX_VAR)
     end
 
     if isStable and isInTargetBand then
         if not data.sustainedStart then
             data.sustainedStart = now
+            data.stableBuffer = {}
         end
 
+        -- Collect current values
+        table.insert(data.stableBuffer, {
+            tas      = tas,
+            gs       = gs,
+            turnRate = turnRate,
+            accelG   = accelG,
+            alt      = alt,
+            fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0,
+            abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0,
+            flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0,
+        })
+
+        -- Once we have confirmed sustained performance for the required duration...
         if (now - data.sustainedStart) >= SUSTAINED_DURATION then
             if not data.lastSustainedLog or (now - data.lastSustainedLog) >= 10.0 then
-                local windVec = atmosphere.getWind(pos)
-                local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
-                local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
 
-                local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
-                local tempC    = math.floor(tempK - 273.15)
-                local pressHpa = math.floor(pressPa / 100 + 0.5)
+                -- === AVERAGE ALL STABLE SAMPLES ===
+                local n = #data.stableBuffer
+                if n > 0 then
+                    local sumTAS = 0; local sumGS = 0; local sumTurn = 0; local sumG = 0; local sumAlt = 0
+                    local sumFuel = 0; local sumAB = 0; local sumFlaps = 0
 
-                local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
-                local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0
-                local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
+                    for _, sample in ipairs(data.stableBuffer) do
+                        sumTAS   = sumTAS   + sample.tas
+                        sumGS    = sumGS    + sample.gs
+                        sumTurn  = sumTurn  + sample.turnRate
+                        sumG     = sumG     + sample.accelG
+                        sumAlt   = sumAlt   + sample.alt
+                        sumFuel  = sumFuel  + sample.fuel
+                        sumAB    = sumAB    + sample.abState
+                        sumFlaps = sumFlaps + sample.flaps
+                    end
 
-                local logLine = string.format("%s,%s,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d",
-                    data.playerName, data.aircraftType,
-                    tas, gs, turnRate, accelG, alt, fuel,
-                    windSpeed, windDir, tempC, pressHpa,
-                    abState, flaps)
+                    local avgTAS      = math.floor(sumTAS / n + 0.5)
+                    local avgGS       = math.floor(sumGS / n + 0.5)
+                    local avgTurnRate = math.floor(sumTurn / n * 10 + 0.5) / 10
+                    local avgG        = math.floor(sumG / n * 10 + 0.5) / 10
+                    local avgAlt      = math.floor(sumAlt / n + 0.5)
+                    local avgFuel     = math.floor(sumFuel / n + 0.5)
+                    local avgAB       = (sumAB / n > 0.5) and 1 or 0
+                    local avgFlaps    = math.floor(sumFlaps / n + 0.5)
 
-                logSustained(data, logLine)
-                data.lastSustainedLog = now
-                trigger.action.outSoundForGroup(gid, "pluck_high.ogg")
+                    -- Environmental data
+                    local windVec = atmosphere.getWind(pos)
+                    local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
+                    local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+                    local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
+                    local tempC    = math.floor(tempK - 273.15)
+                    local pressHpa = math.floor(pressPa / 100 + 0.5)
+
+                    local logLine = string.format("%s,%s,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d",
+                        data.playerName, data.aircraftType,
+                        avgTAS, avgGS, avgTurnRate, avgG, avgAlt, avgFuel,
+                        windSpeed, windDir, tempC, pressHpa,
+                        avgAB, avgFlaps)
+
+                    logSustained(data, logLine)
+                    data.lastSustainedLog = now
+                    trigger.action.outSoundForGroup(gid, "pluck_high.ogg")   -- "logged" sound
+                end
             end
         else
-            trigger.action.outSoundForGroup(gid, "pluck.ogg")
+            trigger.action.outSoundForGroup(gid, "pluck.ogg")   -- "still building stability" sound
         end
     else
+        -- Stability lost: reset everything
         data.sustainedStart = nil
         data.lastSustainedLog = nil
+        data.stableBuffer = {}
     end
 
     -- Environment
@@ -374,7 +418,7 @@ function Debug.updateTelemetry()
         end
     end
 
-    return now + 1.0
+    return now + SAMPLE_INTERVAL
 end
 
 -- ================== INIT ==================
