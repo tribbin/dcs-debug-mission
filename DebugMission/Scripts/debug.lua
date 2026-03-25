@@ -2,7 +2,7 @@ Debug = Debug or {}
 Debug.players = {}
 
 -- ================== CONFIG ==================
-local SUSTAINED_DURATION = 8.0 -- seconds
+local SUSTAINED_DURATION = 5.0 -- seconds
 local TAS_MAX_VAR        = 5.0 -- km/h/s
 local TURNRATE_MAX_VAR   = 0.5 -- deg/s
 local ALT_MAX_VAR        = 5.0 -- m/s
@@ -36,7 +36,7 @@ local function ensurePlayerLogFile(data)
     local file = io.open(logPath, "a")
     if file then
         if not fileExists then
-            file:write("Timestamp,Player,Aircraft,TAS_km_h,TurnRate_dps,AccelG,Alt_m,Fuel_%,Wind_m_s,WindFrom_deg,Temp_C,Press_hPa,AB,Flaps\n")
+            file:write("Timestamp,Player,Aircraft,TAS_km_h,GS_km_h,TurnRate_dps,AccelG,Alt_m,Fuel_%,Wind_m_s,WindFrom_deg,Temp_C,Press_hPa,AB,Flaps\n")
             file:flush()
         end
         data.logFile = file
@@ -143,8 +143,22 @@ function Debug.buildTelemetry(gid, unit, data)
     local dt = data.prevTime and (now - data.prevTime) or 1.0
 
     local vel = unit:getVelocity() or {x=0, y=0, z=0}
-    local tas = math.floor(math.sqrt(vel.x^2 + vel.y^2 + vel.z^2) * 3.6 + 0.5)
-    local vs  = math.floor(vel.y)
+
+    -- === GROUND SPEED (GS) ===
+    local gs_ms = math.sqrt(vel.x^2 + vel.y^2 + vel.z^2)
+    local gs    = math.floor(gs_ms * 3.6 + 0.5)
+
+    -- === TRUE AIR SPEED (TAS) ===
+    local fullPos = unit:getPosition()
+    local pos     = fullPos.p
+    local wind    = atmosphere.getWind(pos)
+    local airVelX = vel.x - wind.x
+    local airVelY = vel.y - wind.y
+    local airVelZ = vel.z - wind.z
+    local tas_ms  = math.sqrt(airVelX^2 + airVelY^2 + airVelZ^2)
+    local tas     = math.floor(tas_ms * 3.6 + 0.5)
+
+    local vs = math.floor(vel.y)
 
     local accelG = 0
     if data.prevVel then
@@ -155,10 +169,12 @@ function Debug.buildTelemetry(gid, unit, data)
         accelG = math.floor(accelMS2 / 9.81 * 10 + 0.5) / 10
     end
 
-    local pos = unit:getPosition().p
     local alt = math.floor(pos.y)
 
-    local heading = math.deg(math.atan2(vel.x, vel.z))
+    -- Nose orientation
+    local heading = math.deg(math.atan2(fullPos.z.x, fullPos.z.z))
+    heading = (heading + 360) % 360
+
     local turnRate = 0
     if data.prevHeading and data.prevTime then
         local dH = heading - data.prevHeading
@@ -241,15 +257,18 @@ function Debug.buildTelemetry(gid, unit, data)
                 local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and 1 or 0
                 local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
 
-                local logLine = string.format("%s,%s,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d",
+                local logLine = string.format("%s,%s,%d,%d,%.1f,%.1f,%d,%d,%d,%d,%d,%d,%d,%d",
                     data.playerName, data.aircraftType,
-                    tas, turnRate, accelG, alt, fuel,
+                    tas, gs, turnRate, accelG, alt, fuel,
                     windSpeed, windDir, tempC, pressHpa,
                     abState, flaps)
 
                 logSustained(data, logLine)
                 data.lastSustainedLog = now
+                trigger.action.outSoundForGroup(gid, "pluck_high.ogg")
             end
+        else
+            trigger.action.outSoundForGroup(gid, "pluck.ogg")
         end
     else
         data.sustainedStart = nil
@@ -290,7 +309,7 @@ function Debug.buildTelemetry(gid, unit, data)
         "Temp: %d°C   Press: %d hPa\n"..
         "Wind: %d m/s from %d°\n\n"..
         "AIRCRAFT\n"..
-        "TAS: %d km/h%s\n"..
+        "TAS: %d km/h%s   GS: %d km/h\n"..
         "VS: %d m/s%s\n"..
         "Turn rate: %.1f °/s\n"..
         "Accel: %.1f G\n"..
@@ -310,12 +329,12 @@ function Debug.buildTelemetry(gid, unit, data)
         math.floor(pressPa / 100),
         windSpeed,
         windDir,
-        tas, tasDelta,
+        tas, tasDelta, gs,
         vs, vsDelta,
         turnRate,
         accelG,
         alt,
-        fuel, abState, flaps,          -- ← new compact line
+        fuel, abState, flaps,
         dTAS_rate, makeCorrectionBar(dTAS_rate, TAS_MAX_VAR),
         dTurn_rate, makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR),
         dAlt_rate,  makeCorrectionBar(dAlt_rate, ALT_MAX_VAR),
