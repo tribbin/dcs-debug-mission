@@ -143,14 +143,13 @@ function Debug.buildTelemetry(gid, unit, data)
     local dt = data.prevTime and (now - data.prevTime) or 1.0
 
     local vel = unit:getVelocity() or {x=0, y=0, z=0}
+    local fullPos = unit:getPosition()
+    local pos = fullPos.p
 
-    -- === GROUND SPEED (GS) ===
+    -- === CALCULATIONS ===
     local gs_ms = math.sqrt(vel.x^2 + vel.y^2 + vel.z^2)
     local gs    = math.floor(gs_ms * 3.6 + 0.5)
 
-    -- === TRUE AIR SPEED (TAS) ===
-    local fullPos = unit:getPosition()
-    local pos     = fullPos.p
     local wind    = atmosphere.getWind(pos)
     local airVelX = vel.x - wind.x
     local airVelY = vel.y - wind.y
@@ -159,6 +158,7 @@ function Debug.buildTelemetry(gid, unit, data)
     local tas     = math.floor(tas_ms * 3.6 + 0.5)
 
     local vs = math.floor(vel.y)
+    local alt = math.floor(pos.y)
 
     local accelG = 0
     if data.prevVel then
@@ -169,9 +169,6 @@ function Debug.buildTelemetry(gid, unit, data)
         accelG = math.floor(accelMS2 / 9.81 * 10 + 0.5) / 10
     end
 
-    local alt = math.floor(pos.y)
-
-    -- Nose orientation
     local heading = math.deg(math.atan2(fullPos.z.x, fullPos.z.z))
     heading = (heading + 360) % 360
 
@@ -186,12 +183,10 @@ function Debug.buildTelemetry(gid, unit, data)
     local tasDelta = data.prevTAS and string.format(" (%+.1f)", (tas - data.prevTAS) / dt) or ""
     local vsDelta  = data.prevVS  and string.format(" (%+d)", math.floor((vs - data.prevVS) / dt)) or ""
 
-    -- Signed rates for correction bars
     local dTAS_rate  = data.prevTAS and dt > 0.1 and (tas - data.prevTAS) / dt or 0
     local dTurn_rate = data.prevTurnRate and (turnRate - data.prevTurnRate) or 0
     local dAlt_rate  = data.prevAlt and dt > 0.1 and (alt - data.prevAlt) / dt or 0
 
-    -- Correction bar helper
     local function makeCorrectionBar(value, maxVal)
         local width = 21
         local half  = 10
@@ -212,17 +207,44 @@ function Debug.buildTelemetry(gid, unit, data)
         return table.concat(bar)
     end
 
-    -- Target altitude band check
-    local isInTargetBand = false
-    local nearestTarget = nil
-    local minDist = math.huge
+    -- Find nearest pre-programmed altitude for snapping
+    local nearestTarget = TARGET_ALTITUDES[1]
+    local minDist = math.abs(alt - TARGET_ALTITUDES[1])
     for _, target in ipairs(TARGET_ALTITUDES) do
         local dist = math.abs(alt - target)
         if dist < minDist then
             minDist = dist
             nearestTarget = target
         end
-        if dist <= ALTITUDE_TOLERANCE then
+    end
+
+    local altDeviation = alt - nearestTarget
+
+    local function makeAltDeviationBar(deviation)
+        local maxDev = 300
+        local width = 41
+        local half  = 20
+        local pos   = math.floor(half + (deviation / maxDev) * half)
+        pos = math.max(0, math.min(width - 1, pos))
+
+        local bar = {}
+        for i = 0, width - 1 do
+            if i == half then
+                bar[i+1] = "0"
+            else
+                bar[i+1] = "="
+            end
+        end
+        if pos ~= half then
+            bar[pos+1] = (deviation > 0) and ">" or "<"
+        end
+        return table.concat(bar)
+    end
+
+    -- === SUSTAINED TURN DETECTION (CSV logging) - ORIGINAL LOGIC KEPT ===
+    local isInTargetBand = false
+    for _, target in ipairs(TARGET_ALTITUDES) do
+        if math.abs(alt - target) <= ALTITUDE_TOLERANCE then
             isInTargetBand = true
             nearestTarget = target
             break
@@ -275,7 +297,12 @@ function Debug.buildTelemetry(gid, unit, data)
         data.lastSustainedLog = nil
     end
 
-    -- === CONTROL VALUES ===
+    -- Environment
+    local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
+    local windVec = atmosphere.getWind(pos)
+    local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
+    local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+
     local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
     local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and "ON" or "OFF"
     local flaps    = unit.getDrawArgumentValue and math.floor((unit:getDrawArgumentValue(ARG_FLAPS) or 0) * 100 + 0.5) or 0
@@ -289,59 +316,46 @@ function Debug.buildTelemetry(gid, unit, data)
     data.prevAlt      = alt
     data.prevTime     = now
 
-    -- Environment values
-    local windVec = atmosphere.getWind(pos)
-    local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
-    local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
-    local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
-
-    -- Target band status text
-    local targetStatus
-    if isInTargetBand then
-        targetStatus = string.format("Target: %d m (±%d m) - LOGGING ENABLED", nearestTarget, ALTITUDE_TOLERANCE)
-    else
-        targetStatus = string.format("Target: OUTSIDE BANDS (nearest %d m) - NO LOGGING", nearestTarget)
-    end
-
-    -- Telemetry overlay with correction bars
     return string.format(
+        "DCS SUSTAINED TURN TELEMETRY                                      Telemetry %s\n\n"..
         "ENVIRONMENT\n"..
-        "Temp: %d°C   Press: %d hPa\n"..
+        "Temp: %d°C    Press: %d hPa\n"..
         "Wind: %d m/s from %d°\n\n"..
-        "AIRCRAFT\n"..
-        "TAS: %d km/h%s   GS: %d km/h\n"..
+        "TURN PERFORMANCE\n"..
+        "TAS: %d km/h%s    GS: %d km/h\n"..
         "VS: %d m/s%s\n"..
-        "Turn rate: %.1f °/s\n"..
-        "Accel: %.1f G\n"..
-        "Alt: %d m\n"..
-        "Fuel: %d%%   AB: %s   Flaps: %d%%\n\n"..
-        "SUSTAINED TURN BARS (stay near 0)\n"..
-        "TAS Δ: %.1f km/h/s\n"..
-        "%s\n"..
-        "Turn Δ: %.2f °/s²\n"..
-        "%s\n"..
-        "Alt Δ: %.1f m/s\n"..
+        "Turn Rate: %.1f °/s     Accel: %.1f G\n"..
+        "Fuel: %d%%    AB: %s    Flaps: %d%%\n\n"..
+        "SUSTAINED TURN STABILITY (stay near center)\n"..
+        "TAS Δ: %.1f km/h/s\n%s\n"..
+        "Turn Δ: %.2f °/s²\n%s\n"..
+        "Alt Δ: %.1f m/s\n%s\n\n"..
+        "────────────────────────────────────────────────────────────\n"..
+        "PRIMARY FLIGHT REFERENCE (bottom of screen)\n\n"..
+        "TAS:    %d km/h\n"..
+        "TARGET: %d m\n"..
+        "CURRENT:%d m\n\n"..
+        "Altitude Deviation Bar (0 = snapped target altitude)\n"..
         "%s\n\n"..
-        "%s\n\n"..
-        "Player: %s | %s\n"..
-        "Telemetry %s",
+        "Player: %s | %s",
+        data.enabled and "ON" or "OFF",
         math.floor(tempK - 273.15),
         math.floor(pressPa / 100),
         windSpeed,
         windDir,
         tas, tasDelta, gs,
         vs, vsDelta,
-        turnRate,
-        accelG,
-        alt,
+        turnRate, accelG,
         fuel, abState, flaps,
         dTAS_rate, makeCorrectionBar(dTAS_rate, TAS_MAX_VAR),
         dTurn_rate, makeCorrectionBar(dTurn_rate, TURNRATE_MAX_VAR),
         dAlt_rate,  makeCorrectionBar(dAlt_rate, ALT_MAX_VAR),
-        targetStatus,
+        tas,
+        nearestTarget,
+        alt,
+        makeAltDeviationBar(altDeviation),
         data.playerName,
-        data.aircraftType,
-        data.enabled and "ON" or "OFF"
+        data.aircraftType
     )
 end
 
