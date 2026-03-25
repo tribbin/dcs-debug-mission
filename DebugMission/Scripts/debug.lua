@@ -324,18 +324,18 @@ function Debug.buildTelemetry(gid, unit, data)
         "TURN PERFORMANCE\n"..
         "TAS: %d km/h%s    GS: %d km/h\n"..
         "VS: %d m/s%s\n"..
-        "Turn Rate: %.1f °/s     Accel: %.1f G\n"..
+        "Turn Rate: %.1f °/s     G: %.1f\n"..
         "Fuel: %d%%    AB: %s    Flaps: %d%%\n\n"..
         "SUSTAINED TURN STABILITY (stay near center)\n"..
         "TAS Δ: %.1f km/h/s\n%s\n"..
         "Turn Δ: %.2f °/s²\n%s\n"..
         "Alt Δ: %.1f m/s\n%s\n\n"..
         "────────────────────────────────────────────────────────────\n"..
-        "PRIMARY FLIGHT REFERENCE (bottom of screen)\n\n"..
+        "PRIMARY FLIGHT REFERENCE\n\n"..
         "TAS:    %d km/h\n"..
         "TARGET: %d m\n"..
         "CURRENT:%d m\n\n"..
-        "Altitude Deviation Bar (0 = snapped target altitude)\n"..
+        "Altitude Deviation Bar (0 = target altitude)\n"..
         "%s\n\n"..
         "Player: %s | %s",
         data.enabled and "ON" or "OFF",
