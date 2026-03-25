@@ -8,6 +8,9 @@ local TAS_MAX_VAR        = 5.0     -- km/h/s
 local TURNRATE_MAX_VAR   = 0.5     -- deg/s
 local ALT_MAX_VAR        = 5.0     -- m/s
 
+local MIN_TURNRATE       = 1.0   -- Ignore anything slower than ~1°/s as a "turn"
+local MIN_GS_KMH         = 100.0  -- Ignore taxi/low-speed false triggers
+
 local TARGET_ALTITUDES   = {20, 1000, 5000, 10000, 20000, 30000}
 
 --local ARG_THROTTLE = 722 -- Has no animation
@@ -261,9 +264,11 @@ function Debug.buildTelemetry(gid, unit, data)
         local dTAS_rate_abs  = math.abs(dTAS_rate)
         local dTurn_rate_abs = math.abs(dTurn_rate)
         local dAlt_rate_abs  = math.abs(dAlt_rate)
-        isStable = (dTAS_rate_abs <= TAS_MAX_VAR) and
-                   (dTurn_rate_abs <= TURNRATE_MAX_VAR) and
-                   (dAlt_rate_abs <= ALT_MAX_VAR)
+        isStable = (dTAS_rate_abs <= TAS_MAX_VAR) 
+                and (dTurn_rate_abs <= TURNRATE_MAX_VAR) 
+                and (dAlt_rate_abs <= ALT_MAX_VAR)
+                and (math.abs(turnRate) >= MIN_TURNRATE)
+                and (gs >= MIN_GS_KMH)
     end
 
     if isStable and isInTargetBand then
