@@ -317,7 +317,7 @@ function Debug.buildTelemetry(gid, unit, data)
                     -- Environmental data
                     local windVec = atmosphere.getWind(pos)
                     local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
-                    local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+                    local windDir   = math.floor((math.deg(math.atan2(windVec.z, windVec.x)) + 180) % 360 + 0.5)
                     local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
                     local tempC    = math.floor(tempK - 273.15)
                     local pressHpa = math.floor(pressPa / 100 + 0.5)
@@ -347,7 +347,7 @@ function Debug.buildTelemetry(gid, unit, data)
     local tempK, pressPa = atmosphere.getTemperatureAndPressure(pos)
     local windVec = atmosphere.getWind(pos)
     local windSpeed = math.floor(math.sqrt(windVec.x^2 + windVec.z^2) + 0.5)
-    local windDir   = math.floor((math.deg(math.atan2(windVec.x, windVec.z)) + 180) % 360 + 0.5)
+    local windDir   = math.floor((math.deg(math.atan2(windVec.z, windVec.x)) + 180) % 360 + 0.5)
 
     local fuel     = unit.getFuel and math.floor((unit:getFuel() or 0) * 100 + 0.5) or 0
     local abState  = (unit.getDrawArgumentValue and (unit:getDrawArgumentValue(ARG_AB) or 0) > 0.5) and "ON" or "OFF"
